@@ -8,184 +8,223 @@ on:
 jobs:
   archive:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 20
 
-      - name: Install Playwright and stealth plugins
+      - name: Install dependencies
         run: |
-          npm install playwright playwright-extra puppeteer-extra-plugin-stealth
-          npx playwright install --with-deps chromium
+          npm init -y
+          npm install playwright@latest playwright-extra playwright-extra-plugin-stealth
 
       - name: Create archiver script
         run: |
-          cat > archiver.js << 'EOF'
+          cat << 'EOF' > archiver.js
+          const fs = require('fs/promises');
           const { chromium } = require('playwright-extra');
-          const stealth = require('puppeteer-extra-plugin-stealth')();
-          chromium.use(stealth);
+          const StealthPlugin = require('playwright-extra-plugin-stealth');
 
-          const fs = require('fs');
-          const path = require('path');
-          const crypto = require('crypto');
+          chromium.use(StealthPlugin());
 
-          // Random delay helper
-          const randomDelay = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+          // Sanitize a string to be safe for use as a filename
+          function sanitizeFilename(name) {
+            return name
+              .replace(/[^a-z0-9]/gi, '_') // replace non-alphanumerics
+              .replace(/_+/g, '_')         // collapse multiple underscores
+              .toLowerCase()
+              .slice(0, 200);              // avoid extremely long filenames
+          }
 
-          async function captureScreenshot(url) {
-            const hash = crypto.createHash('md5').update(url).digest('hex');
-            const outputPath = path.join('screenshots', `${hash}.png`);
-
-            if (!fs.existsSync('screenshots')) {
-              fs.mkdirSync('screenshots', { recursive: true });
-            }
-
-            console.log(`Processing: ${url}`);
-
+          async function archive(url) {
             const browser = await chromium.launch({
-              headless: true,
-              args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-dev-shm-usage',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process'
-              ]
+              headless: true
             });
 
             const context = await browser.newContext({
-              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-              viewport: { width: 1920, height: 1080 },
-              locale: 'en-US',
-              timezoneId: 'America/New_York'
+              viewport: { width: 1280, height: 720 }
             });
 
             const page = await context.newPage();
 
-            // Mask WebDriver property
-            await page.addInitScript(() => {
-              Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-              });
-              
-              // Additional fingerprint masking
-              Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5]
-              });
-              
-              Object.defineProperty(navigator, 'languages', {
-                get: () => ['en-US', 'en']
-              });
-            });
+            // Derive a safe base name from the URL
+            const safeName = sanitizeFilename(url);
+            const outputDir = 'downloads';
+            const screenshotPath = `${outputDir}/${safeName}.png`;
+            const linksPath = `${outputDir}/${safeName}.links.txt`;
+
+            await fs.mkdir(outputDir, { recursive: true });
 
             try {
-              await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+              console.log(`Navigating to: ${url}`);
+              await page.goto(url, {
+                waitUntil: 'networkidle',
+                timeout: 60000
+              });
 
-              // Randomized wait for Cloudflare Turnstile (2-6 seconds)
-              const turnstileWait = randomDelay(2000, 6000);
-              console.log(`Waiting ${turnstileWait}ms to clear potential Cloudflare redirects...`);
-              await page.waitForTimeout(turnstileWait);
+              // Wait a bit for possible redirects / JS
+              await page.waitForTimeout(5000);
 
-              // Scroll with randomized timing
-              const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
-              let currentPosition = 0;
+              // Scroll to trigger lazy loading
+              await autoScroll(page);
 
-              while (currentPosition < scrollHeight) {
-                currentPosition += randomDelay(250, 400);
-                await page.evaluate((pos) => window.scrollTo(0, pos), currentPosition);
-                await page.waitForTimeout(randomDelay(150, 300));
-              }
+              // Take full page screenshot
+              await page.screenshot({
+                path: screenshotPath,
+                fullPage: true
+              });
+              console.log(`Saved screenshot to ${screenshotPath}`);
 
-              // Final render wait (randomized 1.5-3 seconds)
-              await page.waitForTimeout(randomDelay(1500, 3000));
+              // === NEW: Extract and store links ===
+              // 1. Collect raw href values from the page
+              const rawLinks = await page.$$eval('a[href]', anchors =>
+                anchors
+                  .map(a => a.getAttribute('href'))
+                  .filter(Boolean)
+              );
 
-              await page.screenshot({ path: outputPath, fullPage: true });
-              console.log(`Screenshot saved: ${outputPath}`);
+              const pageUrl = page.url();
+
+              // 2. Normalize to absolute URLs, remove invalids and duplicates
+              const absoluteLinks = [...new Set(
+                rawLinks
+                  .map(href => {
+                    try {
+                      return new URL(href, pageUrl).href;
+                    } catch {
+                      return null;
+                    }
+                  })
+                  .filter(Boolean)
+              )];
+
+              // 3. Save them as a simple newline-separated text file
+              await fs.writeFile(
+                linksPath,
+                absoluteLinks.join('\n'),
+                'utf8'
+              );
+
+              console.log(
+                `Saved ${absoluteLinks.length} links to ${linksPath}`
+              );
+              // === END NEW CODE ===
+
             } catch (error) {
-              console.error(`Error capturing ${url}:`, error.message);
+              console.error(`Error archiving ${url}:`, error);
             } finally {
               await browser.close();
             }
           }
 
+          async function autoScroll(page) {
+            await page.evaluate(async () => {
+              await new Promise((resolve) => {
+                let totalHeight = 0;
+                const distance = 400;
+                const timer = setInterval(() => {
+                  const { scrollHeight } = document.scrollingElement || document.body;
+                  window.scrollBy(0, distance);
+                  totalHeight += distance;
+
+                  if (totalHeight >= scrollHeight) {
+                    clearInterval(timer);
+                    resolve();
+                  }
+                }, 300);
+              });
+            });
+          }
+
+          // Read URL from command line
           const url = process.argv[2];
           if (!url) {
-            console.error('Usage: node archiver.js <URL>');
+            console.error('Usage: node archiver.js <url>');
             process.exit(1);
           }
 
-          captureScreenshot(url);
+          archive(url).catch(err => {
+            console.error(err);
+            process.exit(1);
+          });
           EOF
 
-      - name: Extract URLs and capture screenshots
+      - name: Extract URLs from commit message
+        id: extract_urls
         run: |
-          COMMIT_MSG=$(git log -1 --pretty=%B)
-          
-          if echo "$COMMIT_MSG" | grep -q "\[skip ci\]"; then
-            echo "Skipping screenshot capture (commit contains [skip ci])"
-            exit 0
-          fi
-          
-          URLS=$(echo "$COMMIT_MSG" | grep -Eo 'https?://[^[:space:]"'"'"'<>]+' || true)
-          
-          if [ -z "$URLS" ]; then
-            echo "No URLs found in commit message"
-            exit 0
-          fi
-          
-          echo "Found URLs:"
+          LAST_COMMIT_MSG="$(git log -1 --pretty=%B)"
+          echo "Last commit message: $LAST_COMMIT_MSG"
+
+          # Extract URLs (http or https)
+          URLS=$(echo "$LAST_COMMIT_MSG" | grep -Eo '(http|https)://[^ ]+')
+          echo "Extracted URLs:"
           echo "$URLS"
-          
-          echo "$URLS" | while read -r URL; do
-            if [ -n "$URL" ]; then
-              echo "Capturing: $URL"
-              node archiver.js "$URL"
-              sleep $(shuf -i 2-5 -n 1)
+
+          # Save them to a file for later steps
+          echo "$URLS" > urls.txt
+
+      - name: Run archiver for each URL
+        if: success()
+        run: |
+          if [ ! -s urls.txt ]; then
+            echo "No URLs found in commit message. Skipping archiver."
+            exit 0
+          fi
+
+          mkdir -p downloads
+
+          while IFS= read -r url; do
+            if [ -z "$url" ]; then
+              continue
+            fi
+            echo "Archiving URL: $url"
+            node archiver.js "$url"
+          done < urls.txt
+
+      # Optional: Split large files in downloads/ directory (e.g., >90MB)
+      - name: Split large files
+        run: |
+          mkdir -p temp_splits
+          for file in downloads/*; do
+            if [ -f "$file" ]; then
+              size=$(stat -c%s "$file")
+              # ~90MB threshold (90 * 1024 * 1024)
+              if [ "$size" -gt 94371840 ]; then
+                echo "Splitting large file: $file"
+                base=$(basename "$file")
+                split -b 90M "$file" "temp_splits/${base}.part-"
+                rm "$file"
+              fi
             fi
           done
 
-      - name: Split large files
-        run: |
-          if [ -d "screenshots" ]; then
-            cd screenshots
-            for file in *.png; do
-              if [ -f "$file" ]; then
-                SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
-                if [ "$SIZE" -gt 94371840 ]; then
-                  echo "Splitting large file: $file"
-                  zip -s 90m "${file}.zip" "$file"
-                  rm "$file"
-                fi
-              fi
-            done
+          # Move split parts back into downloads
+          if ls temp_splits/* 1> /dev/null 2>&1; then
+            mv temp_splits/* downloads/
           fi
 
-      - name: Cleanup temporary files
+      - name: Clean up temp files
         run: |
-          rm -f archiver.js
-          rm -f package.json package-lock.json
-          rm -rf node_modules
+          rm -rf temp_splits
+          rm -f urls.txt
 
       - name: Commit and push changes
+        if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          git add screenshots/
-          
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Add new screenshots [skip ci]"
-            git push
+
+          git add downloads/
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
           fi
+
+          git commit -m "Add archived screenshots and links [skip ci]"
+          git push
