@@ -157,16 +157,24 @@ jobs:
       - name: Extract URLs from commit message
         id: extract_urls
         run: |
+          set +e  # prevent step failure on no matches
+
           LAST_COMMIT_MSG="$(git log -1 --pretty=%B)"
           echo "Last commit message: $LAST_COMMIT_MSG"
 
-          # Extract URLs (http or https)
-          URLS=$(echo "$LAST_COMMIT_MSG" | grep -Eo '(http|https)://[^ ]+')
-          echo "Extracted URLs:"
-          echo "$URLS"
+          # Extract any URLs (http or https), allow empty result
+          URLS=$(echo "$LAST_COMMIT_MSG" | grep -Eo '(http|https)://[^ ]+' || true)
 
-          # Save them to a file for later steps
+          if [ -z "$URLS" ]; then
+            echo "⚠️ No URLs found in commit message."
+          else
+            echo "✅ Extracted URLs:"
+            echo "$URLS"
+          fi
+
           echo "$URLS" > urls.txt
+
+          set -e  # resume normal error handling
 
       - name: Run archiver for each URL
         if: success()
