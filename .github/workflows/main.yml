@@ -3,88 +3,44 @@ name: Screenshot Archiver
 on:
   push:
     branches:
-      - main # Change this to "master" if your default branch is master
+      - main
 
 jobs:
   archive:
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
-
+    
     steps:
-      # 1. Checkout repository.
-      # fetch-depth: 2 lets us reliably read the latest commit message.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
-      # 2. Setup Node.js.
-      # Node 20 is stable and works well with Playwright.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '20'
 
-      # 3. Install browser automation dependencies.
-      # cheerio is used to safely clean and rewrite the saved HTML.
-      - name: Install Playwright and Dependencies
+      - name: Install Playwright
         run: |
-          npm init -y
-          npm install playwright playwright-extra puppeteer-extra-plugin-stealth cheerio
-          npx playwright install --with-deps chromium
+          npm install playwright
+          npx playwright install chromium
+          npx playwright install-deps chromium
 
-      # 4. Create the archiver script.
-      # This script:
-      # - opens each URL
-      # - waits for rendering
-      # - scrolls the page for lazy-loaded content
-      # - saves a screenshot
-      # - saves cleaned HTML
-      # - saves JSON metadata
-      - name: Create Archiver Script
+      - name: Archive URLs
+        continue-on-error: true
         run: |
           cat > archiver.js <<'EOF'
+          const { chromium } = require('playwright');
           const fs = require('fs');
           const path = require('path');
-          const crypto = require('crypto');
-          const cheerio = require('cheerio');
-          const { chromium } = require('playwright-extra');
-          const stealth = require('puppeteer-extra-plugin-stealth')();
-
-          chromium.use(stealth);
 
           function makeSafeName(url) {
-            const base = url
-              .replace(/^https?:\/\//i, '')
-              .replace(/[^a-z0-9]+/gi, '_')
-              .replace(/^_+|_+$/g, '')
-              .toLowerCase()
-              .slice(0, 80);
-
-            const hash = crypto
-              .createHash('sha1')
-              .update(url)
-              .digest('hex')
-              .slice(0, 10);
-
-            return `${base || 'url'}_${hash}`;
+            return url.replace(/^https?:\/\//, '').replace(/[^a-z0-9]+/gi, '_').substring(0, 100);
           }
 
           function toAbsoluteUrl(value, baseUrl) {
-            if (!value) return value;
-
-            // Do not rewrite special protocols.
-            if (
-              value.startsWith('mailto:') ||
-              value.startsWith('tel:') ||
-              value.startsWith('javascript:') ||
-              value.startsWith('data:')
-            ) {
-              return value;
-            }
-
             try {
               return new URL(value, baseUrl).href;
             } catch {
@@ -93,218 +49,107 @@ jobs:
           }
 
           function buildOfflineHtml(html, finalUrl) {
-            const $ = cheerio.load(html, { decodeEntities: false });
-
-            // Add a base tag so relative links still resolve correctly.
-            // This is useful even after rewriting because some attributes may remain.
-            if ($('head').length === 0) {
-              $('html').prepend('<head></head>');
-            }
-
-            $('head base').remove();
-            $('head').prepend(`<base href="${finalUrl}">`);
-
-            // Remove heavy media elements.
-            // Why: you requested not to save pictures, gifs, videos, or similar media.
-            $('img, picture, source, video, audio, canvas').remove();
-
-            // Remove SVG too. Some websites use huge inline SVGs or icons.
-            $('svg').remove();
-
-            // Remove scripts.
-            // Why: saved local scripts often break, make network calls, or behave unpredictably offline.
-            $('script, noscript').remove();
-
-            // Remove resource hints and icons that can trigger extra requests.
-            $('link[rel="preload"]').remove();
-            $('link[rel="prefetch"]').remove();
-            $('link[rel="preconnect"]').remove();
-            $('link[rel="dns-prefetch"]').remove();
-            $('link[rel="icon"]').remove();
-            $('link[rel="shortcut icon"]').remove();
-            $('link[rel="apple-touch-icon"]').remove();
-
-            // Remove external stylesheets for a cleaner offline HTML file.
-            // Trade-off: the page may look less pretty, but it will not depend on remote CSS.
-            $('link[rel="stylesheet"]').remove();
-
-            // Rewrite links to absolute URLs.
-            // Why: local HTML files cannot correctly resolve links like "/about" without help.
-            $('a[href]').each((_, el) => {
-              const href = $(el).attr('href');
-              $(el).attr('href', toAbsoluteUrl(href, finalUrl));
-            });
-
-            // Rewrite form actions to absolute URLs.
-            $('form[action]').each((_, el) => {
-              const action = $(el).attr('action');
-              $(el).attr('action', toAbsoluteUrl(action, finalUrl));
-            });
-
-            // Rewrite any remaining href attributes.
-            $('[href]').each((_, el) => {
-              const href = $(el).attr('href');
-              $(el).attr('href', toAbsoluteUrl(href, finalUrl));
-            });
-
-            // Remove src/srcset attributes from remaining elements to prevent media/network loading.
-            $('[src]').removeAttr('src');
-            $('[srcset]').removeAttr('srcset');
-
-            const archivedComment = `
-          <!--
-          Archived HTML snapshot
-          Final URL: ${finalUrl}
-          Media downloaded: false
-          Media removed: true
-          Scripts removed: true
-          External stylesheets removed: true
-          Captured at: ${new Date().toISOString()}
-          -->
-          `;
-
-            return archivedComment + $.html();
+            let doc = html;
+            
+            doc = doc.replace(/<head>/i, `<head>\n<base href="${finalUrl}">`);
+            
+            doc = doc.replace(/<(img|picture|source|video|audio|canvas)[^>]*>/gi, '');
+            doc = doc.replace(/<svg[\s\S]*?<\/svg>/gi, '');
+            doc = doc.replace(/<(script|noscript)[^>]*>[\s\S]*?<\/\1>/gi, '');
+            doc = doc.replace(/<link[^>]*(preload|prefetch|dns-prefetch|preconnect)[^>]*>/gi, '');
+            
+            return doc;
           }
 
           async function autoScroll(page) {
             await page.evaluate(async () => {
               await new Promise((resolve) => {
                 let totalHeight = 0;
-                const distance = 400;
-
+                const distance = 100;
                 const timer = setInterval(() => {
-                  const scrollHeight = Math.max(
-                    document.body ? document.body.scrollHeight : 0,
-                    document.documentElement ? document.documentElement.scrollHeight : 0
-                  );
-
+                  const scrollHeight = document.body.scrollHeight;
                   window.scrollBy(0, distance);
                   totalHeight += distance;
-
                   if (totalHeight >= scrollHeight) {
                     clearInterval(timer);
                     resolve();
                   }
-                }, 150);
+                }, 100);
               });
             });
           }
 
           (async () => {
             const url = process.argv[2];
-
             if (!url) {
-              console.error('No URL provided.');
+              console.error('No URL provided');
               process.exit(1);
             }
 
-            if (!/^https?:\/\//i.test(url)) {
-              console.error(`Invalid URL. Only http:// and https:// are allowed: ${url}`);
-              process.exit(1);
-            }
-
-            const safeName = makeSafeName(url);
-            const outputDir = 'downloads';
-
-            fs.mkdirSync(outputDir, { recursive: true });
-
-            const screenshotPath = path.join(outputDir, `${safeName}.png`);
-            const htmlPath = path.join(outputDir, `${safeName}.html`);
-            const metadataPath = path.join(outputDir, `${safeName}.json`);
-
-            const browser = await chromium.launch({
-              headless: true,
-              args: ['--no-sandbox', '--disable-setuid-sandbox']
-            });
-
-            const page = await browser.newPage();
-
-            await page.setViewportSize({
-              width: 1920,
-              height: 1080
-            });
-
+            console.log(`Processing: ${url}`);
+            const browser = await chromium.launch({ headless: true });
+            
             try {
-              console.log(`Navigating to ${url}...`);
-
-              const response = await page.goto(url, {
-                waitUntil: 'load',
-                timeout: 60000
+              const context = await browser.newContext({
+                viewport: { width: 1280, height: 720 },
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
               });
+              const page = await context.newPage();
 
-              // Extra wait helps with redirects, Cloudflare-like checks, and delayed rendering.
-              console.log('Waiting for redirects/challenges/dynamic rendering...');
+              console.log(`Navigating to ${url}...`);
+              const response = await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+              
+              if (!response || !response.ok()) {
+                throw new Error(`Failed to load ${url}: ${response?.status()}`);
+              }
+
               await page.waitForTimeout(5000);
-
-              console.log('Scrolling page to trigger lazy-loaded content...');
               await autoScroll(page);
-
-              console.log('Waiting for final rendering...');
               await page.waitForTimeout(2000);
 
-              const title = await page.title().catch(() => '');
               const finalUrl = page.url();
-              const status = response ? response.status() : null;
+              console.log(`Final URL: ${finalUrl}`);
 
-              console.log(`Saving screenshot: ${screenshotPath}`);
-              await page.screenshot({
-                path: screenshotPath,
-                fullPage: true
-              });
+              const html = await page.content();
+              const offlineHtml = buildOfflineHtml(html, finalUrl);
 
-              console.log(`Saving cleaned HTML: ${htmlPath}`);
-              const renderedHtml = await page.content();
-              const offlineHtml = buildOfflineHtml(renderedHtml, finalUrl);
+              const safeName = makeSafeName(finalUrl);
+              const dir = 'downloads';
+              if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+              }
+
+              const htmlPath = path.join(dir, `${safeName}.html`);
               fs.writeFileSync(htmlPath, offlineHtml, 'utf8');
+              console.log(`Saved HTML: ${htmlPath}`);
 
-              const metadata = {
-                originalUrl: url,
-                finalUrl,
-                title,
-                status,
-                safeName,
-                screenshotFile: `${safeName}.png`,
-                htmlFile: `${safeName}.html`,
-                mediaDownloaded: false,
-                mediaRemoved: true,
-                scriptsRemoved: true,
-                externalStylesheetsRemoved: true,
-                capturedAt: new Date().toISOString()
-              };
-
-              console.log(`Saving metadata: ${metadataPath}`);
-              fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
+              const screenshotPath = path.join(dir, `${safeName}.png`);
+              await page.screenshot({ path: screenshotPath, fullPage: true });
+              console.log(`Saved screenshot: ${screenshotPath}`);
 
               console.log(`Successfully archived: ${url}`);
+
             } catch (err) {
               console.error(`Error processing ${url}:`, err);
-              process.exitCode = 1;
+              // Don't set exit code - allow workflow to continue
+              // process.exitCode = 1;
             } finally {
               await browser.close();
             }
           })();
           EOF
 
-      # 5. Extract URLs from the latest commit message and archive them.
-      - name: Extract URLs and Capture Pages
-        run: |
-          mkdir -p downloads
-
           COMMIT_MSG=$(git log -1 --pretty=%B)
-          echo "Commit message:"
-          echo "$COMMIT_MSG"
-
-          # Prevent infinite loops when this workflow commits generated files.
-          if [[ "$COMMIT_MSG" == *"[skip ci]"* ]]; then
-            echo "Skipping CI to prevent infinite loop."
+          
+          if echo "$COMMIT_MSG" | grep -q "\[skip ci\]"; then
+            echo "Skipping archiver (found [skip ci])"
             exit 0
           fi
 
-          # Extract only URLs starting with http:// or https://
-          URLS=$(printf '%s\n' "$COMMIT_MSG" | grep -Eo "https?://[^[:space:]\"'<>]+" || true)
-
+          URLS=$(echo "$COMMIT_MSG" | grep -Eo "https?://[^[:space:]\"'<>]+")
+          
           if [ -z "$URLS" ]; then
-            echo "No URLs found in the commit message."
+            echo "No URLs found in commit message"
             exit 0
           fi
 
@@ -312,52 +157,32 @@ jobs:
           echo "$URLS"
 
           for URL in $URLS; do
-            echo "Processing: $URL"
             node archiver.js "$URL"
           done
 
-      # 6. Split files larger than 90MB.
-      # GitHub has strict file-size limits, so this protects the commit step.
-      - name: Split Large Files Greater Than 90MB
-        run: |
-          mkdir -p downloads
-          cd downloads
-
-          shopt -s nullglob
-
-          for file in *; do
-            if [ -f "$file" ]; then
-              filesize=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
-
-              if [ "$filesize" -gt 94371840 ]; then
-                echo "Splitting $file because it is larger than 90MB..."
-                zip -s 90m "${file}.zip" "$file"
-                rm "$file"
-              fi
-            fi
-          done
-
-          cd ..
-
-      # 7. Remove temporary build files.
-      # Only generated archive files should be committed.
-      - name: Cleanup temporary files
-        run: |
           rm -f archiver.js
-          rm -f package.json package-lock.json
-          rm -rf node_modules
 
-      # 8. Commit generated files back to the repository.
-      - name: Commit and Push changes
+      - name: Split large files
+        continue-on-error: true
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add downloads/
-
-          if git diff --staged --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "Add archived screenshots, HTML, and metadata [skip ci]"
-            git push
+          if [ -d downloads ]; then
+            for file in downloads/*; do
+              if [ -f "$file" ]; then
+                SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
+                if [ "$SIZE" -gt 94371840 ]; then
+                  echo "Splitting $file (size: $SIZE bytes)"
+                  split -b 90M "$file" "${file}.part_"
+                  rm "$file"
+                fi
+              fi
+            done
           fi
+
+      - name: Commit and push
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add downloads/
+          git commit -m "Archive screenshots [skip ci]" || echo "No changes to commit"
+          git push
