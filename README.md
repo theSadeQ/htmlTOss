@@ -1,4 +1,4 @@
-download:
+download:m
 https://www.pornhub.com/shorties
 https://www.pornhub.com/video?o=mv
 https://www.pornhub.com/video?o=ht
