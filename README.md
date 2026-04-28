@@ -2,8 +2,10 @@ download:
 https://www.pornhub.com/shorties
 https://www.pornhub.com/video?o=mv
 https://www.pornhub.com/video?o=ht
-https://www.tiktok.com/tag/fyp
-https://www.tiktok.com/tag/tiktokfyp
-https://www.tiktok.com/tag/viraltiktok
-https://www.tiktok.com/tag/viral
-https://www.tiktok.com/discover?lang=en
+https://www.tikvib.com/
+https://claptik.com/
+https://ttviewer.net/
+https://alltikk.com/tiktok-profile-viewer/
+https://www.anonymous-viewer.com/
+https://exporttok.com/uses/tiktok-account-viewer
+https://claptools.com/tiktok-profile-viewer/
