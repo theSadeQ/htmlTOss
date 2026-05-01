@@ -26,3 +26,5 @@ https://www.pornhub.com/pornstar/bonnie-blue?page=2
 https://www.pornhub.com/pornstar/bonnie-blue?page=3
 https://www.pornhub.com/pornstar/bonnie-blue?page=4
 https://www.pornhub.com/pornstar
+https://www.tiktok.com/discover/cassie-wilson
+https://www.tiktok.com/discover/tina-fitness
