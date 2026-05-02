@@ -1,0 +1,151 @@
+name: Visit Site With Root Cookie File
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  visit:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install chromium
+          npx playwright install-deps chromium
+
+      - name: Create visitor script
+        run: |
+          cat > visitor.js <<'EOF'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
+
+          function parseCookieTxt(cookieText, targetUrl) {
+            return cookieText
+              .split(';')
+              .map(part => part.trim())
+              .filter(Boolean)
+              .map(part => {
+                const equalIndex = part.indexOf('=');
+
+                if (equalIndex === -1) {
+                  return null;
+                }
+
+                const name = part.slice(0, equalIndex).trim();
+                const value = part.slice(equalIndex + 1).trim();
+
+                if (!name) {
+                  return null;
+                }
+
+                return {
+                  name,
+                  value,
+                  url: targetUrl
+                };
+              })
+              .filter(Boolean);
+          }
+
+          async function visitWithCookies(url) {
+            if (!fs.existsSync('cookies.txt')) {
+              throw new Error('cookies.txt not found in repository root.');
+            }
+
+            const cookieText = fs.readFileSync('cookies.txt', 'utf8').trim();
+
+            if (!cookieText) {
+              throw new Error('cookies.txt is empty.');
+            }
+
+            const cookies = parseCookieTxt(cookieText, url);
+
+            if (cookies.length === 0) {
+              throw new Error('No valid cookies found in cookies.txt.');
+            }
+
+            const browser = await chromium.launch({
+              headless: true
+            });
+
+            try {
+              const context = await browser.newContext({
+                ignoreHTTPSErrors: true,
+                viewport: {
+                  width: 1440,
+                  height: 900
+                },
+                userAgent:
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+                  '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+              });
+
+              // Load cookies before opening the site.
+              await context.addCookies(cookies);
+
+              const page = await context.newPage();
+
+              console.log(`Visiting with cookies: ${url}`);
+
+              await page.goto(url, {
+                waitUntil: 'domcontentloaded',
+                timeout: 60000
+              });
+
+              await page.waitForTimeout(3000);
+
+              console.log(`Final URL: ${page.url()}`);
+              console.log('Visit completed.');
+            } finally {
+              await browser.close();
+            }
+          }
+
+          const url = process.argv[2];
+
+          if (!url) {
+            console.error('Usage: node visitor.js https://example.com');
+            process.exit(1);
+          }
+
+          visitWithCookies(url).catch(error => {
+            console.error(error.message);
+            process.exit(1);
+          });
+          EOF
+
+      - name: Visit URLs from commit message using cookies.txt
+        shell: bash
+        run: |
+          COMMIT_MSG="$(git log -1 --pretty=%B)"
+
+          URLS="$(echo "$COMMIT_MSG" | grep -Eo 'https?://[^[:space:]\"'\''<>]+')"
+
+          if [ -z "$URLS" ]; then
+            echo "No URLs found in commit message."
+            exit 0
+          fi
+
+          echo "Found URLs:"
+          echo "$URLS"
+
+          while IFS= read -r URL; do
+            if [ -n "$URL" ]; then
+              node visitor.js "$URL"
+            fi
+          done <<< "$URLS"
