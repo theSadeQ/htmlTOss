@@ -1,4 +1,6 @@
 download:
+https://pornrips.to/legalporno-26-01-10-nuria-millan-ah202-xxx-1080p-hevc-x265-prt/
+https://pornrips.to/arousins-26-04-29-avery-solo-xxx-1080p-hevc-x265-prt-2/
 https://pornrips.to/category/1080p/page/2/
 https://pornrips.to/category/1080p/
 https://www.tiktok.com/discover/pilates
