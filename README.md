@@ -1,4 +1,11 @@
 download:
+https://sproutsocial.com/insights/how-to-find-trending-sounds-on-tiktok/
+https://sproutsocial.com/insights/how-to-find-trending-sounds-on-tiktok/#:~:text=The%20TikTok%20search%20bar%20is,search%20to%20the%20%E2%80%9CSounds%E2%80%9D%20tab.
+https://www.tiktok.com/@lola.belle.bb
+https://www.tiktok.com/@brielle.clark
+https://www.mojo-app.com/tiktok-editor/how-to-find-the-best-tiktok/#:~:text=How%20to%20discover%20a%20new,hashtags%2C%20and%20popular%20TikTok%20videos.
+https://togetheragency.co.uk/news/how-to-find-trending-sounds-on-tiktok#:~:text=TikTok's%20Search%20Bar&text=Just%20type%20'trending%20sound'%20in,be%20paying%20close%20attention%20to.
+
 https://www.instagram.com/ane4k.0 
 https://www.instagram.com/beeveekeeofficial/
 https://www.instagram.com/p/DNa81GgMVJs/
