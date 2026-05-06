@@ -1,4 +1,11 @@
 download:
+www.90min com/teams/real-madrid
+https://madriduniversal.com/legendary-italian-manager-emerges-as-leading-candidate-for-real-madrid-job-report/
+https://madriduniversal.com
+https://www.managingmadrid.com/107361/mbappe-real-madrid-injury-news-2026
+https://www.managingmadrid.com/
+https://www.theguardian.com/football/2026/may/05/kylian-mbappe-real-madrid-clasico-sardinia-trip-ester-exposito
+
 https://tokchart.com/dashboard/sounds/trending
 https://routenote.com/blog/tiktok-sound-search-hum-to-search/
 https://routenote.com/blog/tiktok-sound-search-hum-to-search/#:~:text=TikTok%20is%20launching%20Sound%20Search%2C,tune%20directly%20into%20the%20app.
